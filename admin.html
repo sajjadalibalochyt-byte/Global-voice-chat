@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin Panel - Global Chat</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #1a1a2e; color: #e0e0e0; font-size: 16px; line-height: 1.6; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .hidden { display: none; }
+        h1, h2, h3 { color: #fff; margin-bottom: 20px; }
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: #16213e; border-radius: 15px; padding: 25px; border: 1px solid #0f3460; }
+        .stat-number { font-size: 2.5rem; font-weight: bold; color: #50c878; margin-bottom: 10px; }
+        .stat-label { font-size: 1.1rem; opacity: 0.9; }
+        .list-item { background: #0f3460; padding: 15px; border-radius: 10px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .list-item p { margin: 0; }
+        .btn { background: #e94560; border: none; color: white; padding: 10px 20px; border-radius: 25px; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
+        .btn:disabled { background: #555; cursor: not-allowed; }
+        .btn-small { padding: 8px 16px; font-size: 0.9rem; }
+        .btn-success { background: #50c878; }
+        .btn-info { background: #3f72af; }
+        .btn-danger { background: #e43f5a; }
+        .btn:hover:not(:disabled) { opacity: 0.8; }
+        input[type="text"], input[type="number"], textarea { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #3f72af; background: #1a1a2e; color: #fff; margin-bottom: 10px; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.7); }
+        .modal-content { background-color: #16213e; margin: 10% auto; padding: 30px; border: 1px solid #888; width: 80%; max-width: 500px; border-radius: 15px; }
+        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .chat-message { border-bottom: 1px solid #3f72af; padding: 10px 0; }
+    </style>
+</head>
+<body>
+
+    <div id="loader" style="text-align: center; margin-top: 100px;">
+        <h1>🔐 Verifying Admin Access...</h1>
+    </div>
+
+    <main id="admin-content" class="hidden">
+        <div class="container">
+            <h1>🚀 Super Admin Dashboard</h1>
+            
+            <!-- Stats -->
+            <div class="grid-container card">
+                <div> <div class="stat-number" id="totalUsers">0</div> <div class="stat-label">Total Users</div> </div>
+                <div> <div class="stat-number" id="totalRevenue">0</div> <div class="stat-label">Owner Revenue (💰)</div> </div>
+                <div> <div class="stat-number" id="totalGiftsValue">0</div> <div class="stat-label">Total Gift Value</div> </div>
+                <div> <div class="stat-number" id="onlineUsers">0</div> <div class="stat-label">Users Online</div> </div>
+            </div>
+
+            <!-- Global Announcement -->
+            <div class="card" style="margin-top: 20px;">
+                <h2>📬 Send Message to All User Inboxes</h2>
+                <textarea id="announcementText" placeholder="This message will be sent to every user's private inbox..."></textarea>
+                <button class="btn btn-info" onclick="adminSendAnnouncement()">Send to All Inboxes</button>
+            </div>
+
+            <div class="grid-container" style="margin-top: 20px; align-items: flex-start;">
+                <!-- User Management -->
+                <div class="card">
+                    <h2>👥 User Management</h2>
+                    <input type="text" id="adminUserSearch" onkeyup="filterAdminUsers()" placeholder="Search by name, email, or UID...">
+                    <div id="adminUsersList" style="max-height: 500px; overflow-y: auto; padding-right:10px;"></div>
+                </div>
+
+                <!-- Pending Withdrawals -->
+                <div class="card">
+                    <h2>💸 Pending Withdrawals</h2>
+                    <div id="pendingWithdrawals">No pending withdrawals.</div>
+                </div>
+            </div>
+            
+            <!-- Pending Purchases -->
+            <div class="card" style="margin-top: 20px;">
+                <h2>🛒 Pending Coin Purchases</h2>
+                <div id="pendingPurchases">No pending purchase requests.</div>
+            </div>
+            
+            <!-- Global Chat Management -->
+            <div class="card" style="margin-top: 20px;">
+                <h2>💬 Global Chat Feed</h2>
+                <div id="globalChatFeed" style="max-height: 400px; overflow-y: auto;"></div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- User Edit Modal -->
+    <div id="userEditModal" class="modal">
+      <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <h2 id="modal-username">Edit User</h2>
+        <input type="hidden" id="modal-uid">
+        <label>Coins:</label>
+        <input type="number" id="modal-coins">
+        <label>Role (user or admin):</label>
+        <input type="text" id="modal-role">
+        <button class="btn btn-success" onclick="saveUserDetails()">Save Changes</button>
+      </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+        import { getDatabase, ref, onValue, update, get, query, equalTo, runTransaction, push, serverTimestamp, remove, limitToLast, orderByChild } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-database.js";
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyCdhjt0LLkt1Stg1PAIggjVGbwCHFPQdjY",
+            authDomain: "chat-app-affb3.firebaseapp.com",
+            databaseURL: "https://chat-app-affb3-default-rtdb.firebaseio.com",
+            projectId: "chat-app-affb3",
+            storageBucket: "chat-app-affb3.appspot.com",
+            messagingSenderId: "1000455114616",
+            appId: "1:1000455114616:web:980f46c6264edc44b0c28d"
+        };
+        
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase(app);
+
+        let currentUser = null;
+        let allUsersData = {};
+        const UIElements = {
+            loader: document.getElementById('loader'),
+            adminContent: document.getElementById('admin-content'),
+            totalUsers: document.getElementById('totalUsers'),
+            totalRevenue: document.getElementById('totalRevenue'),
+            totalGiftsValue: document.getElementById('totalGiftsValue'),
+            onlineUsers: document.getElementById('onlineUsers'),
+            pendingWithdrawals: document.getElementById('pendingWithdrawals'),
+            pendingPurchases: document.getElementById('pendingPurchases'),
+            adminUsersList: document.getElementById('adminUsersList'),
+            globalChatFeed: document.getElementById('globalChatFeed'),
+        };
+
+        // --- GATEKEEPER ---
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                const userRef = ref(db, `users/${user.uid}`);
+                get(userRef).then((snapshot) => {
+                    if (snapshot.exists() && snapshot.val().role === 'admin') {
+                        currentUser = user;
+                        UIElements.loader.classList.add('hidden');
+                        UIElements.adminContent.classList.remove('hidden');
+                        loadAdminData();
+                    } else {
+                        alert("ACCESS DENIED: You are not an admin.");
+                        window.location.href = '/index.html';
+                    }
+                });
+            } else {
+                alert("Please log in first.");
+                window.location.href = '/index.html';
+            }
+        });
+
+        // --- DATA LOADING ---
+        function loadAdminData() {
+            // Stats
+            onValue(ref(db, 'users'), s => {
+                if(s.exists()){
+                    allUsersData = s.val();
+                    UIElements.totalUsers.textContent = s.size;
+                    UIElements.onlineUsers.textContent = Object.values(allUsersData).filter(u => u.isOnline).length;
+                    updateAdminUsersList();
+                }
+            });
+            onValue(ref(db, 'owner_revenue'), s => UIElements.totalRevenue.textContent = (s.val() || 0).toLocaleString());
+            onValue(ref(db, 'gift_logs'), s => {
+                let total = 0;
+                if (s.exists()) { s.forEach(c => total += (c.val().price || 0)); }
+                UIElements.totalGiftsValue.textContent = total.toLocaleString();
+            });
+
+            // Pending Withdrawals
+            const pendingWithdrawalsRef = query(ref(db, 'withdrawals'), orderByChild('status'), equalTo('pending'));
+            onValue(pendingWithdrawalsRef, (snapshot) => {
+                let html = '';
+                if (snapshot.exists()) {
+                    snapshot.forEach(child => {
+                        const data = child.val();
+                        const key = child.key;
+                        html += `<div class="list-item">
+                            <div>
+                                <p><strong>User:</strong> ${data.username} (${data.userId.substring(0,5)}...)</p>
+                                <p><strong>Amount:</strong> ${data.amount} 💰</p>
+                                <p><strong>Method:</strong> ${data.method} - ${data.details}</p>
+                            </div>
+                            <div>
+                                <button class="btn btn-small btn-success" onclick="processWithdrawal('${key}', 'approved')">Approve</button>
+                                <button class="btn btn-small btn-danger" onclick="processWithdrawal('${key}', 'rejected', ${data.amount}, '${data.userId}')">Reject</button>
+                            </div>
+                        </div>`;
+                    });
+                } else { html = 'No pending withdrawals.'; }
+                UIElements.pendingWithdrawals.innerHTML = html;
+            });
+            
+            // Pending Purchases
+            const pendingPurchasesRef = query(ref(db, 'pending_purchases'), orderByChild('status'), equalTo('pending'));
+            onValue(pendingPurchasesRef, (snapshot) => {
+                let html = '';
+                if (snapshot.exists()) {
+                    snapshot.forEach(child => {
+                        const data = child.val();
+                        const key = child.key;
+                        html += `<div class="list-item">
+                            <div>
+                                <p><strong>User:</strong> ${data.username} (${data.userId.substring(0,5)}...)</p>
+                                <p><strong>Coins:</strong> ${data.coinAmount.toLocaleString()} 💰 for <strong>Rs. ${data.price}</strong></p>
+                                <p><strong>TID:</strong> ${data.transactionId}</p>
+                            </div>
+                            <div>
+                                <button class="btn btn-small btn-success" onclick="approvePurchase('${key}', '${data.userId}', ${data.coinAmount})">Approve</button>
+                                <button class="btn btn-small btn-danger" onclick="rejectPurchase('${key}')">Reject</button>
+                            </div>
+                        </div>`;
+                    });
+                } else {
+                    html = 'No pending purchase requests.';
+                }
+                UIElements.pendingPurchases.innerHTML = html;
+            });
+            
+            // Global Chat Feed
+            const globalChatRef = query(ref(db, 'global_chat'), limitToLast(50));
+            onValue(globalChatRef, (snapshot) => {
+                let html = '';
+                if(snapshot.exists()){
+                    snapshot.forEach(child => {
+                        const msg = child.val();
+                        const key = child.key;
+                        html = `<div class="list-item chat-message">
+                            <div><strong>${msg.senderName || 'System'}:</strong> ${msg.text}</div>
+                            <button class="btn btn-small btn-danger" onclick="adminDeleteMessage('${key}')">Delete</button>
+                        </div>` + html;
+                    });
+                }
+                UIElements.globalChatFeed.innerHTML = html;
+            });
+        }
+        
+        // --- USER MANAGEMENT ---
+        function updateAdminUsersList() {
+             let html = '';
+             Object.values(allUsersData).sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0)).forEach(user => {
+                if(!user.uid) return;
+                html += `<div class="list-item" id="admin-user-${user.uid}">
+                     <div>
+                        <p><strong>${user.username}</strong> (${user.email})</p>
+                        <p>📱 ${user.mobileNumber || 'N/A'}</p>
+                        <p>Coins: ${(user.coins || 0).toLocaleString()} | Role: ${user.role || 'user'}</p>
+                    </div>
+                    <div>
+                        <button class="btn-small btn-info" onclick="adminEditUser('${user.uid}')">Edit</button>
+                        <button class="btn-small ${user.isBanned ? 'btn-success' : 'btn-danger'}" onclick="adminToggleBan('${user.uid}', ${user.isBanned || false})">${user.isBanned ? 'Unban' : 'Ban'}</button>
+                    </div>
+                </div>`;
+             });
+             UIElements.adminUsersList.innerHTML = html;
+        }
+
+        window.filterAdminUsers = () => {
+            const searchTerm = document.getElementById('adminUserSearch').value.toLowerCase();
+            document.querySelectorAll('.list-item[id^="admin-user-"]').forEach(item => {
+                const userId = item.id.replace('admin-user-', '');
+                const user = allUsersData[userId];
+                if (user) {
+                    const match = user.username.toLowerCase().includes(searchTerm) || 
+                                  user.uid.toLowerCase().includes(searchTerm) || 
+                                  user.email.toLowerCase().includes(searchTerm) ||
+                                  (user.mobileNumber && user.mobileNumber.includes(searchTerm));
+                    item.style.display = match ? 'flex' : 'none';
+                }
+            });
+        };
+        
+        window.adminEditUser = (uid) => {
+            const user = allUsersData[uid];
+            document.getElementById('modal-uid').value = uid;
+            document.getElementById('modal-username').textContent = `Edit ${user.username}`;
+            document.getElementById('modal-coins').value = user.coins || 0;
+            document.getElementById('modal-role').value = user.role || 'user';
+            document.getElementById('userEditModal').style.display = 'block';
+        };
+
+        window.saveUserDetails = () => {
+            const uid = document.getElementById('modal-uid').value;
+            const coins = parseInt(document.getElementById('modal-coins').value);
+            const role = document.getElementById('modal-role').value.trim();
+            update(ref(db, `users/${uid}`), { coins, role });
+            closeModal();
+            alert('User details updated!');
+        };
+
+        window.closeModal = () => {
+            document.getElementById('userEditModal').style.display = 'none';
+        }
+
+        window.adminToggleBan = (uid, isBanned) => {
+            if(confirm(`Are you sure you want to ${isBanned ? 'unban' : 'ban'} this user?`)){
+                update(ref(db, `users/${uid}`), { isBanned: !isBanned });
+            }
+        };
+
+        // --- WITHDRAWAL MANAGEMENT ---
+        window.processWithdrawal = async (key, status, amount, userId) => {
+            if (status === 'rejected') {
+                if(!confirm("Are you sure you want to reject and refund coins?")) return;
+                await runTransaction(ref(db, `users/${userId}/coins`), (currentCoins) => (currentCoins || 0) + amount);
+                alert(`Withdrawal rejected. ${amount} coins refunded.`);
+            }
+            await update(ref(db, `withdrawals/${key}`), { status, processedBy: currentUser.uid });
+            if (status === 'approved') alert('Withdrawal approved.');
+        };
+        
+        // --- PURCHASE MANAGEMENT ---
+        window.approvePurchase = async (key, userId, coinAmount) => {
+            if (!confirm(`Are you sure you want to approve this purchase and add ${coinAmount} coins to the user?`)) return;
+            try {
+                await runTransaction(ref(db, `users/${userId}/coins`), (currentCoins) => (currentCoins || 0) + coinAmount);
+                await update(ref(db, `pending_purchases/${key}`), { status: 'completed', approvedBy: currentUser.uid, processedAt: serverTimestamp() });
+                alert('Purchase approved! Coins have been added to the user account.');
+            } catch (error) {
+                alert(`Failed to approve purchase. Error: ${error.message}`);
+                console.error("Approve Purchase Error: ", error);
+            }
+        };
+
+        window.rejectPurchase = async (key) => {
+            if (!confirm('Are you sure you want to reject this purchase request? This will delete the request.')) return;
+            try {
+                await remove(ref(db, `pending_purchases/${key}`));
+                alert('Purchase request has been rejected and removed.');
+            } catch (error) {
+                alert(`Failed to reject purchase. Error: ${error.message}`);
+            }
+        };
+
+        // --- CONTENT MANAGEMENT ---
+        
+        /**
+         * UPDATED: Sends a message to every user's private inbox.
+         * This creates a new top-level node 'inboxes' in your database.
+         * The structure will be: inboxes/{userId}/{messageId}
+         */
+        window.adminSendAnnouncement = async () => {
+            const text = document.getElementById('announcementText').value.trim();
+            if (!text) {
+                alert("Please enter a message to send.");
+                return;
+            }
+
+            const userIds = Object.keys(allUsersData);
+            if (userIds.length === 0) {
+                alert("No users found to send the message to.");
+                return;
+            }
+
+            if (!confirm(`This will send a private message to the inbox of all ${userIds.length} users. Are you sure?`)) {
+                return;
+            }
+
+            const sendButton = document.querySelector('button[onclick="adminSendAnnouncement()"]');
+            sendButton.disabled = true;
+            sendButton.textContent = 'Sending...';
+
+            const messagePayload = {
+                text: text,
+                senderName: 'System Announcement',
+                senderId: 'SYSTEM_ADMIN',
+                isRead: false, // You can use this in your app to show 'unread' status
+                timestamp: serverTimestamp()
+            };
+
+            const promises = userIds.map(userId => {
+                const userInboxRef = ref(db, `inboxes/${userId}`);
+                return push(userInboxRef, messagePayload);
+            });
+
+            try {
+                await Promise.all(promises);
+                document.getElementById('announcementText').value = '';
+                alert(`Message successfully sent to ${promises.length} user inboxes.`);
+            } catch (error) {
+                console.error("Error sending announcement to all inboxes:", error);
+                alert(`An error occurred. Message may not have been sent to all users. Check console for details.`);
+            } finally {
+                sendButton.disabled = false;
+                sendButton.textContent = 'Send to All Inboxes';
+            }
+        };
+        
+        window.adminDeleteMessage = (messageId) => {
+            if(confirm("Delete this message forever?")){
+                remove(ref(db, `global_chat/${messageId}`));
+            }
+        };
+
+    </script>
+</body>
+</html>
